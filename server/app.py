@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from models import EasemydischargeAction
 from server.environment import EasemydischargePMEnv
 
@@ -7,8 +7,12 @@ env = EasemydischargePMEnv()
 
 
 @app.post("/reset")
-async def reset(payload: dict):
-    task = payload.get("task", "easy")
+async def reset(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    task = payload.get("task", "easy") if isinstance(payload, dict) else "easy"
     obs = env.reset(task=task)
     return {"observation": obs.model_dump(), "reward": 0.0, "done": False, "info": {}}
 
