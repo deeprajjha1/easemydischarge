@@ -1,0 +1,15 @@
+spec_version: 1
+name: easemydischarge-pm-env
+version: "1.0.0"
+description: >
+  Product Manager simulation for easemydischarge — an AI swarm that automates
+  insurance claim pre-filling and hospital NOC coordination to reduce patient
+  discharge time. Agent investigates system bottlenecks, proposes improvements,
+  and submits a roadmap. Graded on concept coverage, investigation thoroughness,
+  strategy quality, and roadmap completeness.
+domain: healthcare
+tasks:
+  - easy
+  - medium
+  - hard
+port: 8000
