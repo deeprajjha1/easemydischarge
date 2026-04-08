@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+import uvicorn
 from models import EasemydischargeAction
 from server.environment import EasemydischargePMEnv
 
@@ -31,3 +32,11 @@ async def get_state():
 @app.get("/")
 async def health():
     return {"status": "ok", "env": "easemydischarge-pm-env"}
+
+
+def main():
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()
