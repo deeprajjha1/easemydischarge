@@ -8,8 +8,27 @@ description: >
   and submits a roadmap. Graded on concept coverage, investigation thoroughness,
   strategy quality, and roadmap completeness.
 domain: healthcare
-tasks:
-  - easy
-  - medium
-  - hard
 port: 8000
+tasks:
+  - id: easy
+    name: Claim Pipeline Optimization
+    description: >
+      Optimize the insurance claim pre-filling pipeline. Investigate the swarm
+      agents and propose improvements to reduce errors and speed up processing.
+    difficulty: easy
+    grader: grader:grade_easy
+  - id: medium
+    name: NOC Coordination Resolution
+    description: >
+      Resolve NOC coordination deadlocks between hospital departments.
+      Investigate inter-department conflicts, propose timeout and escalation
+      mechanisms, and improve parallel coordination.
+    difficulty: medium
+    grader: grader:grade_medium
+  - id: hard
+    name: Multi-Hospital Scaling Architecture
+    description: >
+      Design a scaling architecture to expand from 1 hospital to 50. Address
+      multi-tenancy, compliance, interoperability, monitoring, and phased rollout.
+    difficulty: hard
+    grader: grader:grade_hard

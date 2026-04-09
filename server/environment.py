@@ -188,7 +188,7 @@ class EasemydischargePMEnv:
         if is_repeat:
             base *= 0.25
 
-        return min(max(base, 0.0), 1.0)
+        return min(max(base, 0.01), 0.99)
 
     # ──────────────────────────────────────────────
     # Final score (holistic trajectory evaluation)
@@ -205,7 +205,7 @@ class EasemydischargePMEnv:
             + strategy * 0.20
             + completeness * 0.15
         )
-        return round(min(max(score, 0.0), 1.0), 3)
+        return round(min(max(score, 0.01), 0.99), 3)
 
     def _investigation_score(self) -> float:
         pts, total = 0.0, 3.0
