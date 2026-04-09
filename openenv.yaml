@@ -28,7 +28,7 @@ tasks:
       Optimize the insurance claim pre-filling pipeline. Investigate the swarm
       agents and propose improvements to reduce errors and speed up processing.
     score_range: [0.0, 1.0]
-    grader: "EasemydischargeGrader.grade_easy"
+    grader: "grader:grade_easy"
   - id: medium
     name: NOC Coordination Resolution
     difficulty: medium
@@ -37,7 +37,7 @@ tasks:
       Investigate inter-department conflicts, propose timeout and escalation
       mechanisms, and improve parallel coordination.
     score_range: [0.0, 1.0]
-    grader: "EasemydischargeGrader.grade_medium"
+    grader: "grader:grade_medium"
   - id: hard
     name: Multi-Hospital Scaling Architecture
     difficulty: hard
@@ -45,4 +45,4 @@ tasks:
       Design a scaling architecture to expand from 1 hospital to 50. Address
       multi-tenancy, compliance, interoperability, monitoring, and phased rollout.
     score_range: [0.0, 1.0]
-    grader: "EasemydischargeGrader.grade_hard"
+    grader: "grader:grade_hard"
