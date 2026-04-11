@@ -19,7 +19,7 @@ class EasemydischargePMEnv:
         self.step_count = 0
         self.max_steps = 10
         self.actions_taken: List[Dict[str, Any]] = []
-        # Investigation tracking
+        self._full_actions: List[Dict[str, Any]] = []
         self._queried_swarm = False
         self._queried_departments: Set[str] = set()
         self._analyzed_components: Set[str] = set()
@@ -35,6 +35,7 @@ class EasemydischargePMEnv:
         self.step_count = 0
         self.max_steps = {"easy": 10, "medium": 12, "hard": 15}[task]
         self.actions_taken = []
+        self._full_actions = []
         self._queried_swarm = False
         self._queried_departments = set()
         self._analyzed_components = set()
@@ -86,6 +87,20 @@ class EasemydischargePMEnv:
             "concepts_covered": list(self._covered_concepts),
             "departments_queried": list(self._queried_departments),
             "queried_swarm": self._queried_swarm,
+        }
+
+    def grading_state(self) -> Dict[str, Any]:
+        """Full state dict consumed by grader functions."""
+        return {
+            "task": self.task,
+            "step": self.step_count,
+            "max_steps": self.max_steps,
+            "concepts_covered": list(self._covered_concepts),
+            "departments_queried": list(self._queried_departments),
+            "queried_swarm": self._queried_swarm,
+            "components_analyzed": list(self._analyzed_components),
+            "has_submitted": self._has_submitted,
+            "actions_taken": self._full_actions,
         }
 
     # ──────────────────────────────────────────────
@@ -280,6 +295,16 @@ class EasemydischargePMEnv:
             "action_type": action.action_type.value,
             "detail": action.department or action.component or (action.feature_description or "")[:80],
         })
+        full = {"action_type": action.action_type.value}
+        if action.department:
+            full["department"] = action.department
+        if action.component:
+            full["component"] = action.component
+        if action.feature_description:
+            full["feature_description"] = action.feature_description
+        if action.roadmap:
+            full["roadmap"] = action.roadmap
+        self._full_actions.append(full)
 
     @staticmethod
     def _action_to_str(action: EasemydischargeAction) -> str:

@@ -57,9 +57,11 @@ TASKS = [
 # ── In-process grader (no HTTP, no dependencies) ──────────────────────
 
 def _run_grader(task_id: str) -> float:
-    """Import and call the zero-dependency grader function."""
+    """Import and call the grader, passing the current environment state."""
     import sys
+    import os
     import importlib
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     sys.path.insert(0, "/app")
     mod = importlib.import_module("grader")
     fn_map = {
@@ -68,6 +70,9 @@ def _run_grader(task_id: str) -> float:
         "hard": mod.grade_hard,
     }
     fn = fn_map.get(task_id, mod.grade_easy)
+    env_state = env.grading_state()
+    if env_state.get("actions_taken") and env_state.get("task") == task_id:
+        return fn(env_state)
     return fn()
 
 
@@ -114,25 +119,27 @@ async def get_state():
 @app.get("/tasks")
 async def list_tasks():
     """Task list — used by validator to discover graders."""
-    return TASKS
+    return {"tasks": TASKS}
 
 
 @app.get("/grader")
+@app.post("/grader")
 async def grader_all():
     """All task scores. Format matches multiple validator schemas."""
     scores = _all_scores()
     return {
         "task_scores": scores,
         "scores": scores,
-        "results": [{"task_id": k, "id": k, "score": v} for k, v in scores.items()],
+        "results": [{"task_id": k, "id": k, "score": v, "reward": v} for k, v in scores.items()],
     }
 
 
 @app.get("/grader/{task_id}")
+@app.post("/grader/{task_id}")
 async def grader_by_task(task_id: str):
     """Per-task grader — called as /grader/easy, /grader/medium, /grader/hard."""
     score = _run_grader(task_id)
-    return {"task_id": task_id, "id": task_id, "score": score}
+    return {"task_id": task_id, "id": task_id, "score": score, "reward": score}
 
 
 @app.get("/grade")
