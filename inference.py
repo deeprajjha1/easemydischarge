@@ -1,14 +1,15 @@
 """
 Inference script for easemydischarge-pm-env.
 
-Uses the OpenAI client to call an LLM, which decides what actions to take
-in the hospital discharge PM environment.
+Runs ALL THREE tasks (easy, medium, hard) in sequence, producing
+a [START]/[STEP]/[END] block for each — required by the hackathon
+validator to count 3 tasks with graders.
 
 Environment variables:
     API_BASE_URL  — LLM API endpoint (default: HF router)
     MODEL_NAME    — Model identifier
     HF_TOKEN      — API key
-    TASK          — Task difficulty: easy, medium, hard
+    ENV_BASE_URL  — Environment server URL
 """
 import asyncio
 import json
@@ -27,8 +28,10 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8000")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-TASK = os.getenv("TASK", "easy")
-MAX_STEPS = {"easy": 10, "medium": 12, "hard": 15}.get(TASK, 10)
+BENCHMARK = "easemydischarge-pm-env"
+
+ALL_TASKS = ["easy", "medium", "hard"]
+MAX_STEPS_MAP = {"easy": 10, "medium": 12, "hard": 15}
 
 
 # ── Logging ──────────────────────────────────────────────────────────
@@ -55,10 +58,9 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 # ── Server readiness ──────────────────────────────────────────────────
 def wait_for_server(base_url: str, retries: int = 30, delay: float = 2.0) -> bool:
-    """Block until the environment server responds to GET /."""
     for attempt in range(retries):
         try:
-            resp = httpx.get(f"{base_url}/", timeout=5.0)
+            resp = httpx.get(f"{base_url}/health", timeout=5.0)
             if resp.status_code == 200:
                 print(f"[INFO] Server ready at {base_url} (attempt {attempt + 1})", flush=True)
                 return True
@@ -99,7 +101,7 @@ SYSTEM_PROMPT = textwrap.dedent("""\
 """)
 
 
-def build_user_prompt(obs: Dict[str, Any], step: int, task: str, history: List[str]) -> str:
+def build_user_prompt(obs: Dict[str, Any], step: int, task: str, max_steps: int, history: List[str]) -> str:
     brief = TASK_BRIEFS.get(task, "")
     hist_block = "\n".join(history[-5:]) if history else "None"
     data_str = json.dumps(obs.get("data", {}), indent=2)[:1500]
@@ -108,7 +110,7 @@ def build_user_prompt(obs: Dict[str, Any], step: int, task: str, history: List[s
 
     return textwrap.dedent(f"""\
         CURRENT TASK ({task.upper()}): {brief}
-        Step: {step}/{obs.get('max_steps', MAX_STEPS)}
+        Step: {step}/{obs.get('max_steps', max_steps)}
 
         Environment message: {obs.get('message', '')}
 
@@ -126,9 +128,7 @@ def build_user_prompt(obs: Dict[str, Any], step: int, task: str, history: List[s
 
 
 def parse_action(text: str, step: int, max_steps: int) -> Dict[str, Any]:
-    """Parse LLM response into action dict. Falls back to sensible defaults."""
     text = text.strip()
-    # Extract JSON from potential markdown code blocks
     if "```" in text:
         for line in text.split("```"):
             line = line.strip()
@@ -138,7 +138,6 @@ def parse_action(text: str, step: int, max_steps: int) -> Dict[str, Any]:
                 text = line
                 break
 
-    # Find the JSON object
     start = text.find("{")
     end = text.rfind("}") + 1
     if start >= 0 and end > start:
@@ -147,7 +146,6 @@ def parse_action(text: str, step: int, max_steps: int) -> Dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-    # Fallback strategy: investigate early, propose later
     if step == 1:
         return {"action_type": "query_swarm"}
     elif step == 2:
@@ -174,9 +172,8 @@ def parse_action(text: str, step: int, max_steps: int) -> Dict[str, Any]:
         return {"action_type": "propose_feature", "feature_description": proposals[idx]}
 
 
-def get_llm_action(client: OpenAI, obs: Dict[str, Any], step: int, task: str, history: List[str]) -> Dict[str, Any]:
-    """Call LLM and parse response into an action."""
-    user_prompt = build_user_prompt(obs, step, task, history)
+def get_llm_action(client: OpenAI, obs: Dict[str, Any], step: int, task: str, max_steps: int, history: List[str]) -> Dict[str, Any]:
+    user_prompt = build_user_prompt(obs, step, task, max_steps, history)
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
@@ -188,67 +185,77 @@ def get_llm_action(client: OpenAI, obs: Dict[str, Any], step: int, task: str, hi
             max_tokens=500,
         )
         text = (completion.choices[0].message.content or "").strip()
-        return parse_action(text, step, MAX_STEPS)
+        return parse_action(text, step, max_steps)
     except Exception as exc:
         print(f"[DEBUG] LLM call failed: {exc}", flush=True)
-        return parse_action("", step, MAX_STEPS)
+        return parse_action("", step, max_steps)
 
 
-async def main() -> None:
-    # Wait for the environment server before doing anything
-    if not wait_for_server(ENV_BASE_URL):
-        log_end(success=False, steps=0, score=0.01, rewards=[])
-        return
-
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+async def run_task(http: httpx.AsyncClient, client: OpenAI, task: str) -> None:
+    """Run a single task episode, emitting [START] / [STEP]s / [END]."""
+    max_steps = MAX_STEPS_MAP[task]
     history: List[str] = []
     rewards: List[float] = []
     steps_taken = 0
     final_score = 0.01
     success = False
 
-    log_start(task=TASK, env="easemydischarge-pm-env", model=MODEL_NAME)
+    log_start(task=task, env=BENCHMARK, model=MODEL_NAME)
 
-    async with httpx.AsyncClient(timeout=60.0) as http:
-        try:
-            # Reset environment
-            resp = await http.post(f"{ENV_BASE_URL}/reset", json={"task": TASK})
+    try:
+        resp = await http.post(f"{ENV_BASE_URL}/reset", json={"task": task})
+        resp.raise_for_status()
+        result = resp.json()
+        obs = result["observation"]
+
+        for step in range(1, max_steps + 1):
+            action = get_llm_action(client, obs, step, task, max_steps, history)
+            action_label = action.get(
+                "feature_description",
+                action.get("department", action.get("component", action["action_type"])),
+            )
+
+            resp = await http.post(f"{ENV_BASE_URL}/step", json=action)
             resp.raise_for_status()
             result = resp.json()
+
             obs = result["observation"]
+            reward = result["reward"]
+            done = result["done"]
+            error = result.get("info", {}).get("error")
 
-            for step in range(1, MAX_STEPS + 1):
-                action = get_llm_action(client, obs, step, TASK, history)
-                action_label = action.get("feature_description", action.get("department", action.get("component", action["action_type"])))
+            rewards.append(reward)
+            steps_taken = step
+            log_step(step, str(action_label)[:80], reward, done, error)
+            history.append(f"Step {step}: {action['action_type']} -> reward {reward:.2f}")
 
-                resp = await http.post(f"{ENV_BASE_URL}/step", json=action)
-                resp.raise_for_status()
-                result = resp.json()
+            if done:
+                final_score = result.get("info", {}).get("final_score", 0.01)
+                break
 
-                obs = result["observation"]
-                reward = result["reward"]
-                done = result["done"]
-                error = result.get("info", {}).get("error")
+        final_score = max(0.01, min(0.99, final_score))
+        success = final_score >= 0.3
 
-                rewards.append(reward)
-                steps_taken = step
-                log_step(step, str(action_label)[:80], reward, done, error)
-                history.append(f"Step {step}: {action['action_type']} -> reward {reward:.2f}")
-
-                if done:
-                    final_score = result.get("info", {}).get("final_score", 0.01)
-                    break
-
-            # Clamp final score to (0.01, 0.99)
-            final_score = max(0.01, min(0.99, final_score))
-            success = final_score >= 0.3
-
-        except Exception as e:
-            print(f"[ERROR] {e}", flush=True)
-            traceback.print_exc()
-            success = False
+    except Exception as e:
+        print(f"[ERROR] {e}", flush=True)
+        traceback.print_exc()
+        success = False
 
     log_end(success, steps_taken, final_score, rewards)
+
+
+async def main() -> None:
+    if not wait_for_server(ENV_BASE_URL):
+        for task in ALL_TASKS:
+            log_start(task=task, env=BENCHMARK, model=MODEL_NAME)
+            log_end(success=False, steps=0, score=0.01, rewards=[])
+        return
+
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+
+    async with httpx.AsyncClient(timeout=60.0) as http:
+        for task in ALL_TASKS:
+            await run_task(http, client, task)
 
 
 if __name__ == "__main__":
@@ -257,5 +264,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[FATAL] {e}", flush=True)
         traceback.print_exc()
-        print("[END] success=false steps=0 score=0.010 rewards=", flush=True)
-        sys.exit(0)  # Exit 0 so the validator doesn't see a non-zero exit code
+        for task in ALL_TASKS:
+            print(f"[START] task={task} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+            print(f"[END] success=false steps=0 score=0.010 rewards=", flush=True)
+        sys.exit(0)
